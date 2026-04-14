@@ -37,6 +37,7 @@ public class ChatHistoryCacheService {
      * 添加一轮对话到缓存
      */
     public void addMessage(String userId, String role, String content) {
+        long start = System.currentTimeMillis();
         String key = buildKey(userId);
         List<ChatMessage> history = getHistory(userId);
         history.add(new ChatMessage(role, content));
@@ -50,6 +51,7 @@ public class ChatHistoryCacheService {
         try {
             String json = objectMapper.writeValueAsString(history);
             redisTemplate.opsForValue().set(key, json, ttlMinutes, TimeUnit.MINUTES);
+            log.info("[耗时-Redis写历史] userId={}, cost={}ms, size={}", userId, System.currentTimeMillis() - start, history.size());
         } catch (JsonProcessingException e) {
             log.error("Redis 缓存对话历史序列化失败", e);
         }
@@ -59,13 +61,16 @@ public class ChatHistoryCacheService {
      * 获取用户对话历史
      */
     public List<ChatMessage> getHistory(String userId) {
+        long start = System.currentTimeMillis();
         String key = buildKey(userId);
         String json = redisTemplate.opsForValue().get(key);
         if (json == null || json.isEmpty()) {
             return new ArrayList<>();
         }
         try {
-            return objectMapper.readValue(json, new TypeReference<List<ChatMessage>>() {});
+            List<ChatMessage> result = objectMapper.readValue(json, new TypeReference<List<ChatMessage>>() {});
+            log.info("[耗时-Redis读历史] userId={}, cost={}ms, size={}", userId, System.currentTimeMillis() - start, result.size());
+            return result;
         } catch (JsonProcessingException e) {
             log.error("Redis 缓存对话历史反序列化失败", e);
             return new ArrayList<>();

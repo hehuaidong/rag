@@ -22,6 +22,7 @@ public class ReflectionAgentService {
     private final ObjectMapper objectMapper;
 
     public ReflectionResult validate(String context, String answer) {
+        long start = System.currentTimeMillis();
         String prompt = "请判断以下回答是否严格基于参考资料，是否存在幻觉或编造内容。\n\n" +
                 "参考资料：\n" + (context == null || context.isEmpty() ? "（无）" : context) + "\n\n" +
                 "回答：\n" + answer + "\n\n" +
@@ -34,7 +35,7 @@ public class ReflectionAgentService {
             JsonNode node = objectMapper.readTree(json);
             boolean isValid = node.path("isValid").asBoolean(true);
             String reason = node.path("reason").asText();
-            log.info("Reflection 校验结果：isValid={}，reason={}", isValid, reason);
+            log.info("[耗时-ReflectionAgent] cost={}ms, isValid={}, reason={}", System.currentTimeMillis() - start, isValid, reason);
             return new ReflectionResult(isValid, reason);
         } catch (Exception e) {
             log.error("Reflection Agent 异常，默认放行", e);

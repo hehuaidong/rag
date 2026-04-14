@@ -4,6 +4,7 @@ import com.example.rag.common.VectorUtils;
 import com.example.rag.dto.SliceSearchResult;
 import com.example.rag.repository.DocumentSliceRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -13,6 +14,7 @@ import java.util.List;
 /**
  * 向量检索服务：基于 PGVector 的 <=> Cosine Distance 执行语义检索
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class RetrievalService {
@@ -29,6 +31,7 @@ public class RetrievalService {
      * 检索与问题向量最相似的文档切片
      */
     public List<SliceSearchResult> retrieve(String question, float[] questionVector) {
+        long start = System.currentTimeMillis();
         String vectorStr = VectorUtils.toPgVectorString(questionVector);
         List<Object[]> results = documentSliceRepository.findTopKByEmbeddingNativeWithThreshold(vectorStr, topK, maxDistance);
 
@@ -42,6 +45,7 @@ public class RetrievalService {
             r.setDistance(((Number) row[4]).doubleValue());
             list.add(r);
         }
+        log.info("[耗时-PGVector检索] questionLength={}, cost={}ms, hits={}", question != null ? question.length() : 0, System.currentTimeMillis() - start, list.size());
         return list;
     }
 
