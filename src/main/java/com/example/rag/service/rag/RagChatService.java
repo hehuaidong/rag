@@ -9,7 +9,10 @@ import com.example.rag.service.chat.ChatHistoryCacheService;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.StreamingChatLanguageModel;
 import dev.langchain4j.model.output.Response;
+import dev.langchain4j.model.StreamingResponseHandler;
+import dev.langchain4j.model.output.TokenUsage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,6 +38,7 @@ public class RagChatService {
     private final ChatHistoryCacheService chatHistoryCacheService;
     private final ChatHistoryRepository chatHistoryRepository;
     private final ChatLanguageModel chatLanguageModel;
+    private final StreamingChatLanguageModel streamingChatLanguageModel;
 
     /**
      * 非流式 RAG 问答
@@ -142,6 +146,72 @@ public class RagChatService {
                 emitter.completeWithError(e);
             }
         }).start();
+
+        return emitter;
+    }
+
+    /**
+     * SSE 真实流式 RAG 问答（逐 token 推送，使用 StreamingChatLanguageModel）
+     */
+    public SseEmitter chatStreamReal(String userId, String question) {
+        SseEmitter emitter = new SseEmitter(120_000L);
+
+        try {
+            String rewrittenQuestion = rewriteQuestion(userId, question);
+            float[] questionVector = embeddingService.embed(rewrittenQuestion);
+            List<SliceSearchResult> slices = retrievalService.retrieve(rewrittenQuestion, questionVector);
+            String prompt = promptBuilderService.buildRagPrompt(userId, question, slices);
+
+            List<Long> referencedSliceIds = slices.stream()
+                    .map(SliceSearchResult::getId)
+                    .collect(Collectors.toList());
+
+            StringBuilder answerBuilder = new StringBuilder();
+
+            streamingChatLanguageModel.generate(
+                    Collections.singletonList(new UserMessage(prompt)),
+                    new StreamingResponseHandler<AiMessage>() {
+                        @Override
+                        public void onNext(String token) {
+                            try {
+                                answerBuilder.append(token);
+                                emitter.send(SseEmitter.event().data(token));
+                            } catch (IOException e) {
+                                emitter.completeWithError(e);
+                            }
+                        }
+
+                        @Override
+                        public void onComplete(Response<AiMessage> response) {
+                            try {
+                                emitter.send(SseEmitter.event().data("[DONE]"));
+                                emitter.complete();
+                            } catch (Exception e) {
+                                emitter.completeWithError(e);
+                            }
+                            String finalAnswer = answerBuilder.toString();
+                            saveChatHistory(userId, question, finalAnswer, referencedSliceIds);
+                        }
+
+                        @Override
+                        public void onError(Throwable error) {
+                            log.error("[真实流式-异常] 用户={}", userId, error);
+                            try {
+                                emitter.send(SseEmitter.event().data("流式输出异常：" + error.getMessage()));
+                            } catch (IOException ignored) {
+                            }
+                            emitter.completeWithError(error);
+                        }
+                    }
+            );
+        } catch (Exception e) {
+            log.error("[真实流式-前置异常] 用户={}", userId, e);
+            try {
+                emitter.send(SseEmitter.event().data("流式输出异常：" + e.getMessage()));
+            } catch (IOException ignored) {
+            }
+            emitter.completeWithError(e);
+        }
 
         return emitter;
     }

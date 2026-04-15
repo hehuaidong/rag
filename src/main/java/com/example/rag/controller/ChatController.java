@@ -31,6 +31,11 @@ public class ChatController {
         return chatOrchestratorService.chatStream(request);
     }
 
+    @PostMapping("/stream/real")
+    public SseEmitter chatStreamReal(@RequestBody ChatRequest request) {
+        return chatOrchestratorService.chatStreamReal(request);
+    }
+
     @GetMapping("/history")
     public Result<Page<ChatHistory>> history(
             @RequestParam String userId,

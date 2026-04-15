@@ -213,7 +213,25 @@ curl -N -X POST http://localhost:8080/api/chat/stream \
 
 **预期结果：** 终端逐段输出文字，最后以 `data:[DONE]` 结束
 
-### TC-3.4 userId 为空（异常）
+### TC-3.4 SSE 真实流式问答（逐 token 推送）
+**目的：** 验证基于 `StreamingChatLanguageModel` 的真实逐 token 流式输出
+
+```bash
+curl -N -X POST http://localhost:8080/api/chat/stream/real \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{
+    "userId": "stream-real-test",
+    "question": "根据资料，Spring Boot 提供了哪些特性？"
+  }'
+```
+
+**预期结果：**
+- 终端能够观察到文字**逐 token/逐 chunk 实时输出**（而不是等待数秒后一次性输出）
+- 最后以 `data:[DONE]` 结束
+- 对比旧接口 `/api/chat/stream`：旧接口是先等待大模型生成完整回答，再按固定长度分段模拟推送；新接口 `/api/chat/stream/real` 是模型每生成一个 token 就立即推送
+
+### TC-3.5 userId 为空（异常）
 **目的：** 验证参数校验
 
 ```bash
@@ -408,7 +426,13 @@ curl -N -X POST http://localhost:8080/api/chat/stream \
   -H "Accept: text/event-stream" \
   -d '{"userId":"demo-user","question":"根据资料，Spring Boot 适合什么场景？"}'
 
-# 5. Agent 路由 - 工具调用（20秒）
+# 5. SSE 真实流式问答（1分钟）
+curl -N -X POST http://localhost:8080/api/chat/stream/real \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"userId":"stream-real-test","question":"根据资料，Spring Boot 提供了哪些特性？"}'
+
+# 6. Agent 路由 - 工具调用（20秒）
 curl -s -X POST http://localhost:8080/api/chat \
   -H "Content-Type: application/json" \
   -d '{"userId":"agent-test","question":"现在几点了？"}' | jq '.data.answer'

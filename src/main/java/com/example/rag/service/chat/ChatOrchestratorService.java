@@ -91,6 +91,14 @@ public class ChatOrchestratorService {
         return ragChatService.chatStream(request.getUserId(), request.getQuestion());
     }
 
+    /**
+     * SSE 真实流式问答主入口（逐 token 推送）
+     */
+    public SseEmitter chatStreamReal(ChatRequest request) {
+        // 真实流式暂不走复杂 Agent 校验，直接走 RAG 真实流式
+        return ragChatService.chatStreamReal(request.getUserId(), request.getQuestion());
+    }
+
     private ChatResponse doRagChat(String userId, String question) {
         long ragStart = System.currentTimeMillis();
         // 1. RAG 生成
