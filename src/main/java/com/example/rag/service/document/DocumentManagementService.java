@@ -1,13 +1,17 @@
 package com.example.rag.service.document;
 
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.core.DeleteByQueryResponse;
 import com.example.rag.dto.DocumentUploadResult;
 import com.example.rag.entity.Document;
 import com.example.rag.entity.DocumentSlice;
+import com.example.rag.es.DocumentSliceEs;
 import com.example.rag.exception.BizException;
 import com.example.rag.repository.DocumentRepository;
 import com.example.rag.repository.DocumentSliceRepository;
 import com.example.rag.service.rag.EmbeddingService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -23,6 +27,7 @@ import java.util.stream.Collectors;
 /**
  * 文档管理服务
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DocumentManagementService {
@@ -32,6 +37,7 @@ public class DocumentManagementService {
     private final List<DocumentTextExtractor> extractors;
     private final DocumentSplitService documentSplitService;
     private final EmbeddingService embeddingService;
+    private final ElasticsearchClient elasticsearchClient;
 
     @Value("${rag.document.supported-types:txt,md,pdf}")
     private String supportedTypes;
@@ -89,6 +95,21 @@ public class DocumentManagementService {
             slice.setContent(chunk);
             slice.setEmbedding(vector);
             documentSliceRepository.save(slice);
+
+            // 同步写入 ES
+            try {
+                DocumentSliceEs esDoc = new DocumentSliceEs();
+                esDoc.setId(slice.getId());
+                esDoc.setDocumentId(slice.getDocumentId());
+                esDoc.setChunkIndex(slice.getChunkIndex());
+                esDoc.setContent(slice.getContent());
+                elasticsearchClient.index(idx -> idx
+                    .index("document_slice")
+                    .id(String.valueOf(slice.getId()))
+                    .document(esDoc));
+            } catch (Exception e) {
+                log.error("ES 切片写入失败, sliceId={}, documentId={}", slice.getId(), document.getId(), e);
+            }
         }
 
         return new DocumentUploadResult(document.getId(), document.getFileName(),
@@ -111,6 +132,16 @@ public class DocumentManagementService {
                 .orElseThrow(() -> new BizException("文档不存在：" + id));
         documentSliceRepository.deleteByDocumentId(document.getId());
         documentRepository.delete(document);
+
+        // 同步删除 ES 中对应切片
+        try {
+            DeleteByQueryResponse response = elasticsearchClient.deleteByQuery(dq -> dq
+                .index("document_slice")
+                .query(q -> q.term(t -> t.field("documentId").value(document.getId()))));
+            log.info("ES 切片删除完成, documentId={}, deleted={}", document.getId(), response.deleted());
+        } catch (Exception e) {
+            log.error("ES 切片删除失败, documentId={}", document.getId(), e);
+        }
     }
 
     private String extractText(byte[] content, String fileType) {

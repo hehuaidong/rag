@@ -161,77 +161,258 @@ curl -s -X POST http://localhost:8080/api/retrieval/search \
 
 ---
 
-## 模块三：RAG 智能问答（核心链路）
+## 模块三：RAG 智能问答（基于混合检索）
 
-### 前置：重新上传文档
-```bash
-curl -s -X POST http://localhost:8080/api/documents/upload -F "file=@/tmp/test_doc.txt"
-```
+### 前置：测试知识库
 
-### TC-3.1 RAG 非流式问答（命中资料）
-**目的：** 验证完整 RAG 闭环，回答基于文档内容
+当前已上传 4 份测试文档，共 9 个切片：
+
+| 文档 | ID | 切片数 | 内容主题 |
+|------|-----|--------|----------|
+| `01-microservice.md` | 5 | 2 | 微服务架构设计（概念、拆分原则、通信方式） |
+| `02-product-spec.md` | 6 | 2 | T58-PRO-2024 智能门禁终端规格（型号、硬件、认证编号） |
+| `03-devops-guide.md` | 7 | 3 | DevOps 实践（CI/CD、Docker、K8s、SRE） |
+| `04-financial-compliance.md` | 8 | 2 | 财务合规管理（报销标准、采购审批、合同流程） |
+
+---
+
+### 分类一：语义检索场景（向量检索优势）
+
+> 这类问题依赖语义理解，向量检索能捕捉概念关联。
+
+#### TC-3.1 微服务概念理解
+**目的：** 验证口语化/概念型问题能基于微服务文档回答
 
 ```bash
 curl -s -X POST http://localhost:8080/api/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "userId": "demo-user",
-    "question": "根据资料，Spring Boot 提供了哪些特性？"
+    "userId": "test-ms",
+    "question": "微服务架构有哪些核心特征？"
   }' | jq '.data'
 ```
 
 **预期结果：**
-- `answer` 中包含"自动配置"、"起步依赖"、"嵌入式服务器"等文档原有关键词
-- `referencedSliceIds` 不为空（如 `[1]`）
+- `answer` 中包含"单一职责"、"独立部署"、"去中心化治理"等文档关键词
+- `referencedSliceIds` 包含文档 5 的切片 ID
 
-### TC-3.2 RAG 非流式问答（未命中资料）
+#### TC-3.2 DevOps 概念解释
+**目的：** 验证概念定义型问题的召回
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-devops",
+    "question": "什么是持续集成和持续部署？"
+  }' | jq '.data.answer'
+```
+
+**预期结果：** 回答中包含 CI/CD 的定义、核心工具（Jenkins、GitLab CI）和部署策略（蓝绿、金丝雀）
+
+#### TC-3.3 财务制度理解
+**目的：** 验证对制度/流程类问题的语义召回
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-finance",
+    "question": "公司报销差旅费的标准是什么？"
+  }' | jq '.data.answer'
+```
+
+**预期结果：** 回答中包含不同职级的酒店标准（高管≤2000、中层≤800、普通员工≤400）和餐补标准
+
+#### TC-3.4 容器化概念对比
+**目的：** 验证语义相似性召回（Docker vs Kubernetes）
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-k8s",
+    "question": "Docker 和 Kubernetes 有什么区别？"
+  }' | jq '.data.answer'
+```
+
+**预期结果：** 回答中区分 Docker（容器打包工具）和 K8s（容器编排平台），提及 Pod、Deployment、Service 等概念
+
+---
+
+### 分类二：关键词检索场景（ES 全文检索优势）
+
+> 这类问题包含专有名词、型号、缩写、编号，ES 的 IK 分词+BM25 能精确命中。
+
+#### TC-3.5 产品型号精确查询
+**目的：** 验证 ES 对产品型号的精确匹配能力
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-product",
+    "question": "T58-PRO-2024 的处理器是什么型号？"
+  }' | jq '.data'
+```
+
+**预期结果：**
+- `answer` 中包含"海思 Hi3559A"
+- `referencedSliceIds` 包含文档 6 的切片 ID
+
+#### TC-3.6 SN 码格式查询
+**目的：** 验证 ES 对特定格式字符串的精确召回
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-product",
+    "question": "设备序列号是什么格式？"
+  }' | jq '.data.answer'
+```
+
+**预期结果：** 回答中包含"SN:T58P2403XXXXXXXX"的格式说明
+
+#### TC-3.7 缩写词精确查询
+**目的：** 验证 ES 对技术缩写（K8s、PVC、SLO）的精确匹配
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-k8s",
+    "question": "Kubernetes 中的 PVC 是什么意思？"
+  }' | jq '.data.answer'
+```
+
+**预期结果：** 回答中包含"PVC：PersistentVolumeClaim（持久卷声明）"
+
+#### TC-3.8 金额数字精确查询
+**目的：** 验证 ES 对金额/数字的精确匹配优于向量模糊语义
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-finance",
+    "question": "100万元以上的合同需要谁来审批？"
+  }' | jq '.data.answer'
+```
+
+**预期结果：** 回答中包含"董事会审批"
+
+#### TC-3.9 认证编号精确查询
+**目的：** 验证 ES 对长串编号（类似身份证号）的精确召回
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-product",
+    "question": "产品的 CCC 认证编号是多少？"
+  }' | jq '.data.answer'
+```
+
+**预期结果：** 回答中包含"2024010903528888"
+
+#### TC-3.10 多缩写同时查询
+**目的：** 验证多个缩写词同时出现在问题中时，ES 仍能精确召回
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-sre",
+    "question": "SLO、SLI、SLA 分别是什么意思？"
+  }' | jq '.data.answer'
+```
+
+**预期结果：** 回答中分别解释 SLO（服务等级目标）、SLI（服务等级指标）、SLA（服务等级协议）
+
+---
+
+### 分类三：混合检索增强场景
+
+> 这类问题同时涉及语义理解和关键词，混合检索通过 RRF 融合比单路召回更全面。
+
+#### TC-3.11 短文本/缩写 + 语义结合
+**目的：** 验证 RRF 融合对"缩写+上下文"问题的提升
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-hybrid",
+    "question": "K8s 中如何实现滚动更新？"
+  }' | jq '.data'
+```
+
+**预期结果：**
+- `answer` 中包含滚动更新的概念和 K8s 中的实现方式
+- `referencedSliceIds` 包含文档 7 的切片 ID
+- 向量能理解"如何实现"的语义，ES 能精确命中"K8s"
+
+#### TC-3.12 跨文档概念关联
+**目的：** 验证混合检索对跨文档概念关联的召回能力
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-hybrid",
+    "question": "微服务拆分和 DevOps 持续部署有什么关系？"
+  }' | jq '.data.answer'
+```
+
+**预期结果：** 回答中提及微服务独立部署与 CI/CD 流水线的关联，可能引用文档 5 和文档 7
+
+#### TC-3.13 口语化 + 专有名词
+**目的：** 验证口语化表达中的专有名词能被 ES 增强召回
+
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-hybrid",
+    "question": "咱们公司的 T58 门禁支持 NFC 刷卡吗？"
+  }' | jq '.data.answer'
+```
+
+**预期结果：** 回答中包含"支持 NFC 刷卡"、"ISO 14443 Type A/B"等信息
+
+多轮+混合
+```bash
+curl -s -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-hybrid",
+    "question": "还支持什么？"
+  }' | jq '.data.answer'
+```
+
+**预期结果：** 回答中包含"支持 4G Cat.4"等信息
+---
+
+### 分类四：未命中与异常场景
+
+#### TC-3.14 未命中资料（无关问题）
 **目的：** 验证无关问题时检索为空，模型基于 Prompt 约束给出安全回答
 
 ```bash
 curl -s -X POST http://localhost:8080/api/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "userId": "demo-user",
+    "userId": "test-empty",
     "question": "今天北京天气怎么样？"
-  }' | jq '.data.answer'
-```
-
-**预期结果：** 回答中包含"根据现有资料无法回答"或类似表述
-
-### TC-3.3 SSE 流式问答
-**目的：** 验证流式输出接口正常
-
-```bash
-curl -N -X POST http://localhost:8080/api/chat/stream \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -d '{
-    "userId": "demo-user",
-    "question": "根据资料，Spring Boot 适合什么场景？"
-  }'
-```
-
-**预期结果：** 终端逐段输出文字，最后以 `data:[DONE]` 结束
-
-### TC-3.4 SSE 真实流式问答（逐 token 推送）
-**目的：** 验证基于 `StreamingChatLanguageModel` 的真实逐 token 流式输出
-
-```bash
-curl -N -X POST http://localhost:8080/api/chat/stream/real \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -d '{
-    "userId": "stream-real-test",
-    "question": "根据资料，Spring Boot 提供了哪些特性？"
-  }'
+  }' | jq '.data'
 ```
 
 **预期结果：**
-- 终端能够观察到文字**逐 token/逐 chunk 实时输出**（而不是等待数秒后一次性输出）
-- 最后以 `data:[DONE]` 结束
-- 对比旧接口 `/api/chat/stream`：旧接口是先等待大模型生成完整回答，再按固定长度分段模拟推送；新接口 `/api/chat/stream/real` 是模型每生成一个 token 就立即推送
+- `answer` 中包含"根据现有资料无法回答"或类似表述
+- `referencedSliceIds` 为空列表 `[]`
 
-### TC-3.5 userId 为空（异常）
+#### TC-3.15 userId 为空（异常）
 **目的：** 验证参数校验
 
 ```bash
@@ -247,6 +428,38 @@ curl -s -X POST http://localhost:8080/api/chat \
   "message": "userId 不能为空"
 }
 ```
+
+#### TC-3.16 流式问答（命中资料）
+**目的：** 验证 SSE 流式输出接口正常，且基于混合检索结果回答
+
+```bash
+curl -N -X POST http://localhost:8080/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{
+    "userId": "test-stream",
+    "question": "微服务架构的通信方式有哪些？"
+  }'
+```
+
+**预期结果：** 终端逐段输出文字，内容涉及同步 HTTP、gRPC、消息队列等，最后以 `data:[DONE]` 结束
+
+#### TC-3.17 真实流式问答（逐 token 推送）
+**目的：** 验证基于 `StreamingChatLanguageModel` 的真实逐 token 流式输出
+
+```bash
+curl -N -X POST http://localhost:8080/api/chat/stream/real \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{
+    "userId": "test-real-stream",
+    "question": "Docker 和 Kubernetes 有什么区别？"
+  }'
+```
+
+**预期结果：**
+- 终端能够观察到文字**逐 token/逐 chunk 实时输出**
+- 最后以 `data:[DONE]` 结束
 
 ---
 

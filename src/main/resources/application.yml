@@ -20,6 +20,8 @@ spring:
       port: 6379
       database: 0
       timeout: 10s
+  elasticsearch:
+    uris: http://localhost:9200
 
 server:
   port: 8080
@@ -48,8 +50,13 @@ rag:
     chunk-overlap: 50
     supported-types: txt,md,pdf
   retrieval:
-    top-k: 5
+    top-k: 3
     max-distance: 0.35
+    hybrid:
+      vector-top-k: 15
+      es-top-k: 15
+      rrf-k: 60
+      timeout-ms: 3000
   chat-history:
     max-context-rounds: 10
     ttl-minutes: 60

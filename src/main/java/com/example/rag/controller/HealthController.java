@@ -1,5 +1,6 @@
 package com.example.rag.controller;
 
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import com.example.rag.common.Result;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +28,7 @@ public class HealthController {
     private final DataSource dataSource;
     private final JdbcTemplate jdbcTemplate;
     private final StringRedisTemplate redisTemplate;
+    private final ElasticsearchClient elasticsearchClient;
     private final RestTemplate restTemplate = new RestTemplate();
 
     @GetMapping
@@ -67,6 +69,14 @@ public class HealthController {
             }
         } catch (Exception e) {
             status.put("redis", "DOWN: " + e.getMessage());
+        }
+
+        // Elasticsearch
+        try {
+            elasticsearchClient.ping();
+            status.put("elasticsearch", "UP");
+        } catch (Exception e) {
+            status.put("elasticsearch", "DOWN: " + e.getMessage());
         }
 
         // DashScope API（简单探测，不做真实请求，避免消耗 token）

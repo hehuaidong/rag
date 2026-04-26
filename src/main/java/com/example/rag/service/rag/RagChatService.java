@@ -34,6 +34,7 @@ public class RagChatService {
 
     private final EmbeddingService embeddingService;
     private final RetrievalService retrievalService;
+    private final HybridRetrievalService hybridRetrievalService;
     private final PromptBuilderService promptBuilderService;
     private final ChatHistoryCacheService chatHistoryCacheService;
     private final ChatHistoryRepository chatHistoryRepository;
@@ -63,10 +64,10 @@ public class RagChatService {
         float[] questionVector = embeddingService.embed(rewrittenQuestion);
         log.info("[耗时-向量化] 用户={}, cost={}ms", userId, System.currentTimeMillis() - embedStart);
 
-        // 2. 语义检索（基于重写后的问题）
+        // 2. 混合检索（基于重写后的问题）
         long retrieveStart = System.currentTimeMillis();
-        List<SliceSearchResult> slices = retrievalService.retrieve(rewrittenQuestion, questionVector);
-        log.info("[耗时-向量检索] 用户={}, cost={}ms, hits={}", userId, System.currentTimeMillis() - retrieveStart, slices.size());
+        List<SliceSearchResult> slices = hybridRetrievalService.retrieve(rewrittenQuestion, questionVector);
+        log.info("[耗时-混合检索] 用户={}, cost={}ms, hits={}", userId, System.currentTimeMillis() - retrieveStart, slices.size());
 
         // 3. Prompt 组装
         long promptStart = System.currentTimeMillis();
@@ -116,7 +117,7 @@ public class RagChatService {
             try {
                 String rewrittenQuestion = rewriteQuestion(userId, question);
                 float[] questionVector = embeddingService.embed(rewrittenQuestion);
-                List<SliceSearchResult> slices = retrievalService.retrieve(rewrittenQuestion, questionVector);
+                List<SliceSearchResult> slices = hybridRetrievalService.retrieve(rewrittenQuestion, questionVector);
                 String prompt = promptBuilderService.buildRagPrompt(userId, question, slices);
 
                 Response<AiMessage> response = chatLanguageModel.generate(new UserMessage(prompt));
@@ -159,7 +160,7 @@ public class RagChatService {
         try {
             String rewrittenQuestion = rewriteQuestion(userId, question);
             float[] questionVector = embeddingService.embed(rewrittenQuestion);
-            List<SliceSearchResult> slices = retrievalService.retrieve(rewrittenQuestion, questionVector);
+            List<SliceSearchResult> slices = hybridRetrievalService.retrieve(rewrittenQuestion, questionVector);
             String prompt = promptBuilderService.buildRagPrompt(userId, question, slices);
 
             List<Long> referencedSliceIds = slices.stream()
